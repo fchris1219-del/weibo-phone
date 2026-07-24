@@ -519,7 +519,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
           <label for="setCharFans">角色粉丝数</label>
           <input type="number" id="setCharFans" min="0" step="1" placeholder="例如：28641" />
         </div>
-        <div class="set-hint">粉丝/关注：第一次钉住 wb_lore 时从开场初始化；之后以楼层 / chatMetadata 已存记录为准，再次抓取开场不会覆盖。</div>
+        <div class="set-hint">粉丝/关注/昵称：第一次钉住 wb_lore 时从开场 <code>[账号|…]</code> 初始化（支持 1087万）。之后以楼层 / chatMetadata 为准；点「重新从聊天抓取」会强制按开场覆盖。</div>
       </div>
       <div class="me-card" style="margin-top:10px;border-radius:10px">
         <div style="font-size:14px;font-weight:600;margin-bottom:4px">生成上下文</div>
@@ -670,13 +670,17 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
   }
   function ensureProfileStats(opts={}){
     const force = !!opts.force;
+    const allowDefault = opts.allowDefault !== false;
     const fromSettingsUser = Number(phoneSettings.userFans) || 0;
     const fromSettingsChar = Number(phoneSettings.charFans) || 0;
+    // 默认随机粉量只作「lore/已存都没有」的兜底，绝不把 fansFromStore 置真（否则会挡住开场 [账号] 行）
     if (force || !(Number(state.userFans) > 0)) {
-      state.userFans = fromSettingsUser > 0 ? fromSettingsUser : defaultFansFor('user');
+      if (fromSettingsUser > 0) state.userFans = fromSettingsUser;
+      else if (allowDefault) state.userFans = defaultFansFor('user');
     }
     if (force || !(Number(state.charFans) > 0)) {
-      state.charFans = fromSettingsChar > 0 ? fromSettingsChar : defaultFansFor('char');
+      if (fromSettingsChar > 0) state.charFans = fromSettingsChar;
+      else if (allowDefault) state.charFans = defaultFansFor('char');
     }
     const uf = Number(phoneSettings.userFollowing);
     const cf = Number(phoneSettings.charFollowing);
@@ -685,7 +689,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     if (!(Number(state.userFollowing) >= 0)) state.userFollowing = 12;
     if (!(Number(state.charFollowing) >= 0)) state.charFollowing = 86;
   }
-  ensureProfileStats();
+  // 不在这里填随机粉：等 harvest wb_lore / 已存记录之后再 ensureProfileStats
 
   const PHONE_DATA_KEY = 'weibo_phone_data_v1';
   let _floorSyncTimer = null;
@@ -1462,19 +1466,23 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     // 3) 再补一次 metadata：新空壳没有 lore 时从主存填回
     hydrateFromChatMetadata();
 
-    // 4) 仍空才用同浏览器 localStorage
-    if (!(state.posts.length || state.threads.length || state.wbLore || (state.selectedLoreIds || []).length || state.userFans || state.charFans)) {
+    // 4) 仍空才用同浏览器 localStorage（粉量以 fansFromStore 为准，避免未初始化的 0 误判）
+    const hasPersist = !!(
+      state.posts.length || state.threads.length || state.wbLore
+      || (state.selectedLoreIds || []).length || state.fansFromStore
+    );
+    if (!hasPersist) {
       if (loadPhoneData()) {
-        ensureProfileStats();
+        // 有本地缓存再写回；粉量兜底留给 boot 里 lore 抓取之后
+        if (state.fansFromStore) ensureProfileStats({ allowDefault: false });
         writePhoneBundleToMetadata().catch(() => {});
         deferredSyncToFloor(120);
         return 'local';
       }
-      ensureProfileStats();
       return null;
     }
 
-    ensureProfileStats();
+    if (state.fansFromStore) ensureProfileStats({ allowDefault: false });
     // 把主存镜像写进「当前」微博壳（新 QR 需要带上 lore/快照）
     writePhoneBundleToMetadata().catch(() => {});
     deferredSyncToFloor(150);
@@ -2261,10 +2269,9 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     });
     lines.push('<!--wb_ui:' + JSON.stringify(meta) + '-->');
     // 明文账号行：楼层里肉眼可见，也方便回溯
-    lines.push(`[账号|user|${displayName}|粉丝:${Number(state.userFans)||0}|关注:${Number(state.userFollowing)||0}]`);
-    lines.push(`[账号|char|${displayChar || rawCharName || 'char'}|粉丝:${Number(state.charFans)||0}|关注:${Number(state.charFollowing)||0}]`);
-    // 一旦写入楼层账号行，后续抓取开场不再覆盖
-    if ((Number(state.userFans) > 0) || (Number(state.charFans) > 0)) state.fansFromStore = true;
+    lines.push(`[账号|user|${displayName}|粉丝:${formatFanNumber(state.userFans)}|关注:${Number(state.userFollowing)||0}]`);
+    lines.push(`[账号|char|${displayChar || rawCharName || 'char'}|粉丝:${formatFanNumber(state.charFans)}|关注:${Number(state.charFollowing)||0}]`);
+    // 仅「已确认来自 lore/设置/主存」才锁死；随机兜底粉量不锁，免得挡开场 [账号]
     if (state.wbLore) {
       lines.push('<wb_lore>');
       lines.push(String(state.wbLore).trim());
@@ -2305,82 +2312,130 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     lines.push('</dm>','</weiboapp>');
     return lines.join('\n');
   }
-  function parseAccountStatsFromText(raw){
-    const text = String(raw || '');
-    const re = /\[\s*账号\s*\|\s*(user|char)\s*\|[^\]]*\|粉丝\s*[:：]?\s*(\d+)\s*\|\s*关注\s*[:：]?\s*(\d+)\s*\]/gi;
-    let m;
-    while ((m = re.exec(text))) {
-      const who = String(m[1] || '').toLowerCase();
-      const fans = Number(m[2]) || 0;
-      const following = Number(m[3]) || 0;
-      if (who === 'user' && fans > 0) {
-        state.userFans = fans;
-        if (following >= 0) state.userFollowing = following;
-        state.fansFromStore = true;
-      }
-      if (who === 'char' && fans > 0) {
-        state.charFans = fans;
-        if (following >= 0) state.charFollowing = following;
-        state.fansFromStore = true;
-      }
+  function parseFanNumber(raw){
+    let s = String(raw == null ? '' : raw).trim();
+    if (!s) return 0;
+    s = s.replace(/,/g, '').replace(/，/g, '').replace(/\s+/g, '');
+    // 1087万 / 1.2亿 / 387 / 12k
+    const m = s.match(/^(\d+(?:\.\d+)?)(万|亿|w|W|k|K)?/);
+    if (!m) {
+      const n = parseInt(s, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
     }
+    let n = parseFloat(m[1]);
+    if (!Number.isFinite(n)) return 0;
+    const unit = m[2] || '';
+    if (unit === '万' || unit === 'w' || unit === 'W') n *= 10000;
+    else if (unit === '亿') n *= 1e8;
+    else if (unit === 'k' || unit === 'K') n *= 1000;
+    return Math.max(0, Math.round(n));
   }
-  /** 从 wb_lore / 开场文本解析粉丝（支持账号行 + 自然语言） */
-  function extractFansFromLoreText(raw){
+  function formatFanNumber(n){
+    n = Number(n) || 0;
+    if (n >= 1e8) {
+      const v = n / 1e8;
+      return (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + '亿';
+    }
+    if (n >= 10000) {
+      const v = n / 10000;
+      return (v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + '万';
+    }
+    return String(n);
+  }
+  /** 解析 [账号|user|昵称|粉丝:…|关注:…] */
+  function extractAccountInitFromLore(raw){
     const text = String(raw || '');
     if (!text.trim()) return null;
-    const out = { userFans: 0, charFans: 0, userFollowing: -1, charFollowing: -1, hit: false };
-    const applyWho = (who, fans, following) => {
-      fans = Number(fans) || 0;
-      following = following == null ? -1 : Number(following);
-      if (!(fans > 0) && !(following >= 0)) return;
+    const out = {
+      userId: '', charId: '',
+      userFans: 0, charFans: 0,
+      userFollowing: -1, charFollowing: -1,
+      hit: false,
+    };
+    const reAcc = /\[\s*账号\s*\|\s*(user|char)\s*\|([^|\]]*)\|\s*粉丝\s*[:：]?\s*([^|\]]*)\|\s*关注\s*[:：]?\s*([^|\]]*)\s*\]/gi;
+    let m;
+    while ((m = reAcc.exec(text))) {
+      const who = String(m[1] || '').toLowerCase();
+      const id = String(m[2] || '').trim();
+      const fans = parseFanNumber(m[3]);
+      const following = parseFanNumber(m[4]);
       out.hit = true;
       if (who === 'user') {
+        if (id) out.userId = id;
         if (fans > 0) out.userFans = fans;
         if (following >= 0) out.userFollowing = following;
       } else if (who === 'char') {
+        if (id) out.charId = id;
         if (fans > 0) out.charFans = fans;
         if (following >= 0) out.charFollowing = following;
       }
-    };
-    let m;
-    const reAcc = /\[\s*账号\s*\|\s*(user|char)\s*\|[^\]]*\|粉丝\s*[:：]?\s*(\d+)\s*\|\s*关注\s*[:：]?\s*(\d+)\s*\]/gi;
-    while ((m = reAcc.exec(text))) applyWho(String(m[1]).toLowerCase(), m[2], m[3]);
-    const reFanTag = /\[\s*粉丝\s*\|\s*(user|char)\s*\|\s*(\d+)\s*\]/gi;
-    while ((m = reFanTag.exec(text))) applyWho(String(m[1]).toLowerCase(), m[2], -1);
-    const patterns = [
-      { who: 'user', re: /(?:user|我|玩家)\s*(?:的)?\s*粉丝(?:数)?\s*[:：]?\s*(\d+)/gi },
-      { who: 'char', re: /(?:char|角色|卡)\s*(?:的)?\s*粉丝(?:数)?\s*[:：]?\s*(\d+)/gi },
-      { who: 'user', re: /粉丝(?:数)?\s*[:：]?\s*(?:user|我)\s*[:：]?\s*(\d+)/gi },
-      { who: 'char', re: /粉丝(?:数)?\s*[:：]?\s*(?:char|角色)\s*[:：]?\s*(\d+)/gi },
+    }
+    // 自然语言粉丝（可带万）
+    const nat = [
+      { who: 'user', re: /(?:user|我|玩家)\s*(?:的)?\s*粉丝(?:数)?\s*[:：]?\s*([0-9.]+)\s*(万|亿|w|W|k|K)?/gi },
+      { who: 'char', re: /(?:char|角色|卡)\s*(?:的)?\s*粉丝(?:数)?\s*[:：]?\s*([0-9.]+)\s*(万|亿|w|W|k|K)?/gi },
     ];
-    const dn = String(displayName || '').trim();
-    const dc = String(displayChar || rawCharName || '').trim();
-    if (dn && dn.length >= 2) {
-      patterns.push({ who: 'user', re: new RegExp(dn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:的)?\\s*粉丝(?:数)?\\s*[:：]?\\s*(\\d+)', 'gi') });
-    }
-    if (dc && dc.length >= 2) {
-      patterns.push({ who: 'char', re: new RegExp(dc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:的)?\\s*粉丝(?:数)?\\s*[:：]?\\s*(\\d+)', 'gi') });
-    }
-    patterns.forEach(({ who, re }) => {
+    nat.forEach(({ who, re }) => {
       let mm;
-      while ((mm = re.exec(text))) applyWho(who, mm[1], -1);
+      while ((mm = re.exec(text))) {
+        const fans = parseFanNumber(mm[1] + (mm[2] || ''));
+        if (!(fans > 0)) continue;
+        out.hit = true;
+        if (who === 'user') out.userFans = fans;
+        else out.charFans = fans;
+      }
     });
+    const reFanTag = /\[\s*粉丝\s*\|\s*(user|char)\s*\|\s*([^|\]]+)\s*\]/gi;
+    while ((m = reFanTag.exec(text))) {
+      const who = String(m[1] || '').toLowerCase();
+      const fans = parseFanNumber(m[2]);
+      if (!(fans > 0)) continue;
+      out.hit = true;
+      if (who === 'user') out.userFans = fans;
+      else if (who === 'char') out.charFans = fans;
+    }
     return out.hit ? out : null;
   }
-  function applyFansFromWbLore(raw, opts={}){
-    // 规则：只有还没有「已存记录」（楼层 wb_ui / [账号] / metadata）时，才用开场 lore 初始化一次
-    if (state.fansFromStore && !opts.force) return false;
-    const hit = extractFansFromLoreText(raw == null ? state.wbLore : raw);
-    if (!hit) return false;
-    if (hit.userFans > 0) state.userFans = hit.userFans;
-    if (hit.charFans > 0) state.charFans = hit.charFans;
+  function parseAccountStatsFromText(raw){
+    const hit = extractAccountInitFromLore(raw);
+    if (!hit) return;
+    if (hit.userFans > 0) { state.userFans = hit.userFans; state.fansFromStore = true; }
+    if (hit.charFans > 0) { state.charFans = hit.charFans; state.fansFromStore = true; }
     if (hit.userFollowing >= 0) state.userFollowing = hit.userFollowing;
     if (hit.charFollowing >= 0) state.charFollowing = hit.charFollowing;
-    if (hit.userFans > 0 || hit.charFans > 0 || hit.userFollowing >= 0 || hit.charFollowing >= 0) {
-      state.fansFromStore = true; // 初始化完成后视为已有记录，二次抓取开场不再覆盖
+  }
+  function extractFansFromLoreText(raw){
+    return extractAccountInitFromLore(raw);
+  }
+  /** 从 wb_lore 初始化粉丝 + 微博昵称（id） */
+  function applyFansFromWbLore(raw, opts={}){
+    const hit = extractAccountInitFromLore(raw == null ? state.wbLore : raw);
+    if (!hit) return false;
+    const force = !!opts.force;
+    let changed = false;
+
+    // 粉/关注：未锁死或 force 时写入
+    if (force || !state.fansFromStore) {
+      if (hit.userFans > 0) { state.userFans = hit.userFans; changed = true; }
+      if (hit.charFans > 0) { state.charFans = hit.charFans; changed = true; }
+      if (hit.userFollowing >= 0) { state.userFollowing = hit.userFollowing; changed = true; }
+      if (hit.charFollowing >= 0) { state.charFollowing = hit.charFollowing; changed = true; }
+      if (changed) state.fansFromStore = true;
     }
-    return true;
+
+    // 昵称/id：force，或设置里还空时，用 lore 账号行（与粉量锁死无关，避免「粉随机锁死后 id 永远抓不到」）
+    const nextSettings = {};
+    if (hit.userId && (force || !(phoneSettings.userWeiboId || '').trim())) {
+      nextSettings.userWeiboId = hit.userId;
+    }
+    if (hit.charId && (force || !(phoneSettings.charWeiboId || '').trim())) {
+      nextSettings.charWeiboId = hit.charId;
+    }
+    if (Object.keys(nextSettings).length) {
+      savePhoneSettings(nextSettings);
+      changed = true;
+    }
+    return changed;
   }
   function parseWeiboApp(raw){
     const text=normalizeAiText(raw);
@@ -2863,8 +2918,8 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
           </div>
           <div class="pf-bio">${bio ? esc(bio) : (isUser ? '简介：同层微博' : '角色微博主页 · 只看 TA 发过的微博')}</div>
           <div class="pf-stats">
-            <div><b>${following}</b><span>关注</span></div>
-            <div><b>${fans}</b><span>粉丝</span></div>
+            <div><b>${esc(formatFanNumber(following))}</b><span>关注</span></div>
+            <div><b>${esc(formatFanNumber(fans))}</b><span>粉丝</span></div>
             <div><b>${list.length}</b><span>微博</span></div>
           </div>
           ${isUser
@@ -2920,7 +2975,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     document.getElementById('meBio').textContent = bio ? ('简介：' + bio) : ('@' + displayName);
     const mine = postsOfWho('user');
     document.getElementById('stWb').textContent=String(mine.length);
-    document.getElementById('stFan').textContent=String(Number(state.userFans) || 0);
+    document.getElementById('stFan').textContent=formatFanNumber(state.userFans);
     const followEl = document.getElementById('stFollow');
     if (followEl) followEl.textContent = String(Number(state.userFollowing) || 0);
   }
@@ -3461,8 +3516,8 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     document.getElementById('setUserId').value = phoneSettings.userWeiboId || '';
     document.getElementById('setCharId').value = phoneSettings.charWeiboId || '';
     document.getElementById('setUserBio').value = phoneSettings.userBio || '';
-    document.getElementById('setUserFans').value = String(Number(state.userFans) || Number(phoneSettings.userFans) || '');
-    document.getElementById('setCharFans').value = String(Number(state.charFans) || Number(phoneSettings.charFans) || '');
+    document.getElementById('setUserFans').value = formatFanNumber(Number(state.userFans) || Number(phoneSettings.userFans) || 0);
+    document.getElementById('setCharFans').value = formatFanNumber(Number(state.charFans) || Number(phoneSettings.charFans) || 0);
     document.getElementById('setIncludeBg').checked = phoneSettings.includeBgLore !== false;
     document.getElementById('setUserId').placeholder = rawUserName || '我的昵称';
     document.getElementById('setCharId').placeholder = rawCharName || '角色昵称';
@@ -3487,8 +3542,8 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     const prevUser = collectUserNameCandidates();
     const prevChar = collectCharNameCandidates();
     const picks = collectCheckedLorePicks();
-    const userFans = Math.max(0, parseInt(document.getElementById('setUserFans').value, 10) || 0);
-    const charFans = Math.max(0, parseInt(document.getElementById('setCharFans').value, 10) || 0);
+    const userFans = Math.max(0, parseFanNumber(document.getElementById('setUserFans').value));
+    const charFans = Math.max(0, parseFanNumber(document.getElementById('setCharFans').value));
     savePhoneSettings({
       userWeiboId: document.getElementById('setUserId').value.trim(),
       charWeiboId: document.getElementById('setCharId').value.trim(),
@@ -3549,8 +3604,12 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
   };
   document.getElementById('settingsHarvestLore').onclick = async ()=>{
     const lore = await harvestWbLore({ force: true });
+    const applied = applyFansFromWbLore(lore || state.wbLore, { force: true });
+    ensureProfileStats({ allowDefault: true });
+    persistPhoneState();
+    renderAll();
     openSettingsPanel();
-    if (lore) showBubble(`已钉住设定 ${lore.length} 字`);
+    if (lore) showBubble(applied ? `已钉住设定 ${lore.length} 字，并强制同步账号行` : `已钉住设定 ${lore.length} 字`);
     else showBubble('未在当前聊天找到 <wb_lore>');
   };
   document.getElementById('settingsClearLore').onclick = async ()=>{
@@ -3591,13 +3650,17 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
   // metadata 主存：藏楼后再开壳也能灌回 lore / 勾选 / 帖
   harvestWbLore().then((lore) => {
     if (lore) console.log('[同层微博] wb_lore(metadata)', lore.length, '字');
-    // 仅第一次（楼层还没有账号记录）才从开场 lore 初始化粉丝/关注
-    if (!state.fansFromStore) applyFansFromWbLore(lore || state.wbLore);
-    ensureProfileStats();
+    // 粉量：未锁死才灌；昵称空位也会补（见 applyFansFromWbLore）
+    applyFansFromWbLore(lore || state.wbLore);
+    ensureProfileStats({ allowDefault: true });
     writePhoneBundleToMetadata().catch(() => {});
     persistPhoneState();
     renderAll();
-  }).catch(() => {});
+  }).catch(() => {
+    ensureProfileStats({ allowDefault: true });
+    renderAll();
+  });
+  // 先画壳；粉量/昵称等 lore 异步抓完再刷
   renderAll();
   if (restored) console.log('[同层微博] 已从' + restored + '恢复', state.posts.length, '帖 /', state.threads.length, '私信 / lore', (state.wbLore || '').length);
 })();
