@@ -3394,7 +3394,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
 
     const keyword = mode === 'feed' ? 'feed'
       : mode === 'char-post' ? 'weibo'
-      : (mode.startsWith('dm') ? 'dm' : 'weibo');
+      : (mode.startsWith('dm') ? 'msg' : 'weibo');
     let context = '';
 
     if(mode==='feed'){
@@ -3465,7 +3465,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       ].join('\n');
     }else if(mode==='dm-scatter'){
       context = [
-        '【同层微博任务｜关键词 dm｜协议 msg/chat】',
+        '【同层微博任务｜关键词 msg｜协议 msg/chat】',
         '本任务=微博「消息」私信，不是时间线微博，也不是 Threads/脆文。',
         '请结合上方角色设定、场景与聊天前文理解剧情，但输出必须仍是私信协议。',
         '请求类型：收路人私信（分散）',
@@ -3481,7 +3481,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       const name=opts.threadName||'路人';
       const t=state.threads.find(x=>x.name===name);
       context = [
-        '【同层微博任务｜关键词 dm｜协议 msg/chat】',
+        '【同层微博任务｜关键词 msg｜协议 msg/chat】',
         '本任务=微博「消息」私信会话续聊，不是时间线微博，也不是 Threads/脆文。',
         '请结合上方角色设定、场景与聊天前文理解剧情，但输出必须仍是私信协议。',
         '请求类型：当前私信会话续聊',
