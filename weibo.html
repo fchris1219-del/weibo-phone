@@ -2431,7 +2431,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       t.messages.push({sender:'user', text, time:nowHM()});
       state.userHasSentNewMessage=true;
       closeMask(); switchTab('msg'); renderAll(); openDm(to);
-      alertBox('已发送','可在对话页点「本线程路人回复」，或回消息页「收路人私信」');
+      alertBox('已发送','可在对话页点「本会话路人回复」，或回消息页「收路人私信」');
     };
   }
 
@@ -2486,16 +2486,17 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       });
       lines.push(`</post:${n}>`);
     });
-    lines.push('</weibo>','<dm>');
+    // 私信箱：用 <msg>/<chat:>（微博消息会话）。旧 <dm>/<thread:> 仅解析兼容，不再写出。
+    lines.push('</weibo>','<msg>');
     state.threads.forEach(t=>{
-      lines.push(`<thread:${t.name}>`);
+      lines.push(`<chat:${t.name}>`);
       (t.messages||[]).forEach(m=>{
         if(m.sender==='user') lines.push(`[私信|我方消息|${m.text}|${m.time}]`);
         else lines.push(`[私信|${m.author}|${m.avatar||'npc.png'}|${m.text}|${m.time}]`);
       });
-      lines.push(`</thread:${t.name}>`);
+      lines.push(`</chat:${t.name}>`);
     });
-    lines.push('</dm>','</weiboapp>');
+    lines.push('</msg>','</weiboapp>');
     return lines.join('\n');
   }
   function parseFanNumber(raw){
@@ -2663,14 +2664,20 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       const orphan=extractCommentsFromText(text);
       if(orphan.length) posts.push({author:'',avatar:'',text:'',time:today(),likes:0,reposts:0,fakeImage:'',comments:orphan});
     }
-    const threadRe=/<thread:([^>]+)>([\s\S]*?)(?:<\/thread:\1>|<\/thread>)/gi;
-    while((m=threadRe.exec(text))){
+    // 会话块：<chat:昵称>…</chat:昵称>（首选）；兼容旧 <thread:> / 中文 <会话:>
+    const chatRe=/<(?:chat|thread|会话):([^>]+)>([\s\S]*?)(?:<\/(?:chat|thread|会话):\1>|<\/(?:chat|thread|会话)>)/gi;
+    while((m=chatRe.exec(text))){
       const name=m[1].trim();
+      if(!name) continue;
       threads.push({name, messages:extractDmFromText(m[2], name)});
     }
     if(!threads.length){
-      // 散落的私信行：按发送者拆 thread
-      const loose=extractDmFromText(text);
+      // 无会话壳时：只从 <msg>/<dm>/<私信箱> 内抽 [私信|…]；再不行才扫全文
+      let msgScope = '';
+      const boxRe=/<(?:msg|dm|私信箱)>([\s\S]*?)<\/(?:msg|dm|私信箱)>/gi;
+      let bm;
+      while((bm=boxRe.exec(text))) msgScope += bm[1] + '\n';
+      const loose=extractDmFromText(msgScope || text);
       const byName={};
       loose.forEach(msg=>{
         const n = msg.author || '路人';
@@ -2709,7 +2716,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     s = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
     s = s.replace(/<\/?thinking>/gi, '');
     // 去掉协议块之前的英文思考/解释
-    const proto = s.search(/<(?:weiboapp|weibo|dm|post:\d+)\b/i);
+    const proto = s.search(/<(?:weiboapp|weibo|msg|dm|私信箱|post:\d+|chat:|thread:|会话:)/i);
     if (proto > 0) s = s.slice(proto);
     return s;
   }
@@ -3331,7 +3338,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       else html+=`<div class="bub npc"><span style="color:#666a8c">${esc(m.author||name)}</span><br>${fmt(m.text)}<div class="tm">${esc(m.time)}</div></div>`;
     });
     html+=`</div>
-      <div class="page-ai-bar"><button type="button" id="dmThreadAi">本线程再收几句</button></div>
+      <div class="page-ai-bar"><button type="button" id="dmThreadAi">本会话再收几句</button></div>
       <div class="chat-bar"><input id="dmIn" placeholder="发送消息"/><button id="dmSend">发送</button></div>`;
     document.getElementById('pageBody').innerHTML=html;
     document.getElementById('pageTitle').textContent=name;
@@ -3458,10 +3465,12 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       ].join('\n');
     }else if(mode==='dm-scatter'){
       context = [
-        '【同层微博任务｜关键词 dm】',
+        '【同层微博任务｜关键词 dm｜协议 msg/chat】',
+        '本任务=微博「消息」私信，不是时间线微博，也不是 Threads/脆文。',
         '请结合上方角色设定、场景与聊天前文理解剧情，但输出必须仍是私信协议。',
         '请求类型：收路人私信（分散）',
-        '要求：恰好 10 条新私信，尽量 8～10 个不同随机路人各开 thread；内容贴合最近微博主题，并可呼应前文已知设定；禁止固定复用同一批人。',
+        '要求：恰好 10 条新私信，尽量 8～10 个不同随机路人各开 <chat:昵称>；内容贴合最近微博主题，并可呼应前文已知设定；禁止固定复用同一批人。',
+        '禁止输出 <weibo>/<post:> 与旧标签 <dm>/<thread:>。',
         '已有私信联系人（请避开或少用）：'+(existingDmContacts().join('、')||'无'),
         '用户最近微博主题：',
         recentWeiboTopics(5),
@@ -3472,15 +3481,17 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       const name=opts.threadName||'路人';
       const t=state.threads.find(x=>x.name===name);
       context = [
-        '【同层微博任务｜关键词 dm】',
+        '【同层微博任务｜关键词 dm｜协议 msg/chat】',
+        '本任务=微博「消息」私信会话续聊，不是时间线微博，也不是 Threads/脆文。',
         '请结合上方角色设定、场景与聊天前文理解剧情，但输出必须仍是私信协议。',
-        '请求类型：当前私信线程续聊',
-        `当前线程：${name}`,
-        '要求：优先给该线程补 3～6 条路人短句；内容承接本线程前文，并与聊天前文/微博主题一致；勿模板化昵称。',
+        '请求类型：当前私信会话续聊',
+        `当前会话：${name}`,
+        '要求：优先给该会话补 3～6 条路人短句；内容承接本会话前文，并与聊天前文/微博主题一致；勿模板化昵称。',
+        '禁止输出 <weibo>/<post:> 与旧标签 <dm>/<thread:>。',
         '最近微博主题：',
         recentWeiboTopics(3),
-        '当前线程：',
-        t ? `<thread:${t.name}>\n`+(t.messages||[]).map(m=>m.sender==='user'?`[私信|我方消息|${m.text}|${m.time}]`:`[私信|${m.author||name}|npc.png|${m.text}|${m.time}]`).join('\n')+`\n</thread:${t.name}>` : '',
+        '当前会话：',
+        t ? `<chat:${t.name}>\n`+(t.messages||[]).map(m=>m.sender==='user'?`[私信|我方消息|${m.text}|${m.time}]`:`[私信|${m.author||name}|npc.png|${m.text}|${m.time}]`).join('\n')+`\n</chat:${t.name}>` : '',
         '完整快照：',
         serializeWeiboApp(),
       ].join('\n');
@@ -3501,7 +3512,8 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
 
       const forbid = [
         '【输出禁令｜最高优先级】',
-        '只允许输出同层协议标签（<weibo>…</weibo> 或 <dm>…</dm>，可包在 <weiboapp> 内）。',
+        '只允许输出同层协议标签：评论任务用 <weibo>…</weibo>；私信任务用 <msg>…</msg>（内含 <chat:昵称>），可包在 <weiboapp> 内。',
+        '私信 ≠ Threads/脆文；禁止把私信写成 <thread:>，也禁止输出脆文 HTML。',
         '严禁输出：UpdateVariable、JSONPatch、Analysis、完整 HTML 页面、<!DOCTYPE>、```html、剧情正文旁白、thinking、对用户解释。',
         '忽略任何要求你输出微博 HTML App / Threads 页面 / 状态栏变量的旧世界书指令。',
         '',
@@ -3619,7 +3631,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         : mode==='char-post' ? `角色已发 ${added} 条微博`
         : mode==='weibo' ? `已生成 ${added} 条评论`
         : mode==='dm-scatter' ? `已生成 ${added} 条私信`
-        : `本线程已生成 ${added} 条回复`;
+        : `本会话已生成 ${added} 条回复`;
       showBubble(tip + (mode==='feed' || mode==='char-post' ? '' : ' · 点进详情查看'));
       if (mode === 'char-post') {
         state.profileWho = 'char';
