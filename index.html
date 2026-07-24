@@ -2832,7 +2832,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     lines.push(`</post:${n}>`);
     return lines.join('\n');
   }
-  /** 该帖作者对应的粉丝基数（互动数 ≈ 粉/100） */
+  /** 该帖作者对应的粉丝基数（互动数 ≈ 粉/10） */
   function engagementFansBase(p){
     ensureProfileStats({ allowDefault: true });
     if (isCharAuthor(p?.author) || tokenMeansChar(p?.avatar)) {
@@ -2847,14 +2847,14 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     return Math.max(300, Math.floor(base * (0.08 + (h % 55) / 100)));
   }
   /**
-   * 赞 / 转 / 评（展示虚数）≈ 粉丝数的 1/100，再小幅抖动。
+   * 赞 / 转 / 评（展示虚数）≈ 粉丝数的 1/10，再小幅抖动。
    * 真实 comments[] 仍只存几条热评，与展示数无关。
    */
   function fabricateEngagement(seedText, opts={}){
     const fans = Math.max(100, Number(opts.fans) || Number(state.charFans) || 10000);
     const h = hashSeed(String(seedText || '') + '|' + fans);
-    const center = Math.max(1, Math.round(fans / 100));
-    const likeMul = 0.5 + (h % 111) / 100; // 约 0.5x～1.6x · fans/100
+    const center = Math.max(1, Math.round(fans / 10));
+    const likeMul = 0.5 + (h % 111) / 100; // 约 0.5x～1.6x · fans/10
     const likes = Math.max(1, Math.round(center * likeMul));
     const rpRatio = 0.25 + (h % 50) / 100;
     const reposts = Math.max(0, Math.round(likes * rpRatio));
@@ -2866,7 +2866,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     if (!p) return p;
     const fans = engagementFansBase(p);
     const fab = fabricateEngagement((p.text || '') + '|' + (p.author || ''), { fans });
-    const center = Math.max(1, Math.round(fans / 100));
+    const center = Math.max(1, Math.round(fans / 10));
     const outOfBand = (n) => {
       n = Number(n) || 0;
       return !(n > 0) || n < center / 5 || n > center * 5;
@@ -2898,14 +2898,27 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     if (n < real) n = real;
     const add = Math.max(0, Number(added) || 0);
     if (add > 0) {
-      const center = Math.max(1, Math.round(engagementFansBase(p) / 100));
+      const center = Math.max(1, Math.round(engagementFansBase(p) / 10));
       const jump = Math.max(add, Math.floor(center * (0.01 + (hashSeed(String(p.text || '') + n) % 4) / 100)));
       n += jump;
     }
     p.commentCount = Math.max(n, real);
   }
+  /** 互动数展示：≥1万用「x.x万」，避免一长串 0 */
   function formatEngNumber(n){
-    return formatFanNumber(Number(n) || 0);
+    n = Number(n) || 0;
+    if (n >= 100000000) {
+      const v = n / 100000000;
+      return (v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10)) + '亿';
+    }
+    if (n >= 10000) {
+      const v = n / 10000;
+      // 10万以上取整；不足 10 万保留一位小数（如 1.2万）
+      if (v >= 100) return String(Math.round(v)) + '万';
+      if (v >= 10) return String(Math.round(v)) + '万';
+      return (Math.round(v * 10) / 10).toFixed(1).replace(/\.0$/, '') + '万';
+    }
+    return String(Math.round(n));
   }
   function existingCommentAuthors(p){
     return [...new Set((p.comments||[]).map(c=>c.author).filter(Boolean))];
@@ -3386,7 +3399,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         '硬性数量：',
         '1. 恰好新增 5 条微博（post:1 … post:5），发布者多为路人/热门博主/相关路人号，也可偶有 {{char}}；禁止代替 {{user}} 发博。',
         '2. 每条微博正文下实际评论行最多 5 条（热评）；评论者昵称全部不同。',
-        '3. 赞/转/评展示数都约等于「该发布者粉丝数的 1/100」（可在 0.5～1.6 倍间浮动）；转发 < 赞，评论展示数与赞同量级。不要写 0，也不要写成个位数热帖。',
+        '3. 赞/转/评展示数都约等于「该发布者粉丝数的 1/10」（可在 0.5～1.6 倍间浮动）；转发 < 赞，评论展示数与赞同量级。不要写 0，也不要写成个位数热帖。',
         '4. 微博行格式：[微博|发布者|头像|正文|时间|赞数|转发数|评论数]（评论数为展示总量，可远大于下面实际评论行数）。',
         '5. 微博主题与评论都要能自然呼应前文已知信息（嗑点、称呼、公开关系等），勿剧透未发生情节。',
         '6. 输出格式仅限：',
@@ -3407,7 +3420,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       const who = displayChar || rawCharName || '角色';
       const hint = String(opts.prompt || '').trim();
       const fansHint = formatEngNumber(Number(state.charFans) || 0);
-      const engHint = formatEngNumber(Math.max(1, Math.round((Number(state.charFans) || 10000) / 100)));
+      const engHint = formatEngNumber(Math.max(1, Math.round((Number(state.charFans) || 10000) / 10)));
       context = [
         '【同层微博任务｜关键词 weibo｜角色发博】',
         `请以角色微博账号「${who}」的口吻发微博（作者必须是 ${who}，头像字段写 char）。`,
@@ -3416,7 +3429,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
           : '用户未给提示词：请空 roll——结合人设、开场与最近剧情，发一条自然、可公开的角色碎碎念/动态（勿剧透未发生情节，勿替 {{user}} 发博）。',
         '硬性：',
         '1. 恰好输出 1 条微博（一个 <post:1>）。',
-        `2. 微博行格式：[微博|${who}|char|正文|时间|赞数|转发数|评论数]。当前角色粉丝约 ${fansHint}，赞/转/评展示数大约在 ${engHint} 量级（粉丝的约 1/100）。`,
+        `2. 微博行格式：[微博|${who}|char|正文|时间|赞数|转发数|评论数]。当前角色粉丝约 ${fansHint}，赞/转/评展示数大约在 ${engHint} 量级（粉丝的约 1/10）。`,
         '3. 可选附带最多 5 条路人评论（热评）；昵称勿固定复用。评论展示数可远大于实际评论行。',
         '4. 可附 [伪图|描述]（可选）。',
         '5. 只输出协议，不要剧情旁白。',
