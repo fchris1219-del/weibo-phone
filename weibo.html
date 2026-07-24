@@ -563,6 +563,19 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
 
 <script>
 (function(){
+  // 支持 iframe ?char=&user=&ua=&ca=（正则/扩展注入，避免在正则里塞大脚本）
+  try {
+    const q = new URLSearchParams(location.search || '');
+    const pick = (k) => {
+      const v = q.get(k);
+      return (v != null && String(v).trim() !== '') ? String(v) : '';
+    };
+    if (pick('char')) window.charName = pick('char');
+    if (pick('user')) window.userName = pick('user');
+    if (pick('ua')) window.userAvatarPath = pick('ua');
+    if (pick('ca')) window.charAvatarPath = pick('ca');
+  } catch (_) {}
+
   const charName = (typeof window.charName !== 'undefined') ? window.charName : '{{char}}';
   const userName = (typeof window.userName !== 'undefined') ? window.userName : '{{user}}';
   const userAvatarPath = (typeof window.userAvatarPath !== 'undefined') ? window.userAvatarPath : '{{userAvatarPath}}';
