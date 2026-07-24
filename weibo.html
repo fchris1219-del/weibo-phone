@@ -2475,8 +2475,9 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     lines.push('<weibo>');
     state.posts.forEach((p,i)=>{
       const n=i+1;
+      ensurePostEngagement(p);
       lines.push(`<post:${n}>`);
-      lines.push(`[微博|${p.author}|${p.avatar||defaultUserAvatarToken()}|${p.text}|${p.time}|${p.likes||0}|${p.reposts||0}]`);
+      lines.push(`[微博|${p.author}|${p.avatar||defaultUserAvatarToken()}|${p.text}|${p.time}|${p.likes||0}|${p.reposts||0}|${p.commentCount||0}]`);
       if(p.fakeImage) lines.push(`[伪图|${p.fakeImage}]`);
       (p.comments||[]).forEach(c=>{
         scrubComment(c);
@@ -2644,10 +2645,11 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         const wb=line.match(/^\[微博\|([^|]*)\|([^|]*)\|([\s\S]*?)\|([^|]*)\|([^\]]*)\]$/);
         if(wb){
           post.author=wb[1]; post.avatar=wb[2]; post.text=wb[3]; post.time=wb[4];
-          // 兼容旧：…|赞数]  新：…|赞数|转发数]
+          // 兼容：…|赞数] / …|赞数|转发数] / …|赞数|转发数|评论数]
           const tail = String(wb[5] || '').split('|').map((x) => String(x).trim());
           post.likes = Number(tail[0]) || 0;
           post.reposts = Number(tail[1]) || 0;
+          post.commentCount = Number(tail[2]) || 0;
           return;
         }
         const img=line.match(/^\[伪图\|([\s\S]*?)\]$/);
@@ -2818,8 +2820,9 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
   }
 
   function serializeOnePost(p, n){
+    ensurePostEngagement(p);
     const lines=[`<post:${n}>`];
-    lines.push(`[微博|${p.author}|${p.avatar||defaultUserAvatarToken()}|${p.text}|${p.time}|${p.likes||0}|${p.reposts||0}]`);
+    lines.push(`[微博|${p.author}|${p.avatar||defaultUserAvatarToken()}|${p.text}|${p.time}|${p.likes||0}|${p.reposts||0}|${p.commentCount||0}]`);
     if(p.fakeImage) lines.push(`[伪图|${p.fakeImage}]`);
     (p.comments||[]).forEach(c=>{
       scrubComment(c);
@@ -2829,20 +2832,80 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     lines.push(`</post:${n}>`);
     return lines.join('\n');
   }
-  /** 推荐流互动数：AI 没填或填 0 时本地编一个像真的量级（不生成转发正文） */
-  function fabricateEngagement(seedText){
-    let h = 0;
-    const s = String(seedText || '') + String(Date.now() % 997);
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    const tier = h % 5;
-    // 热帖 / 普通 / 冷门 分布
-    const likes = tier === 0 ? (800 + (h % 9200))
-      : tier === 1 ? (120 + (h % 680))
-      : tier === 2 ? (40 + (h % 90))
-      : tier === 3 ? (8 + (h % 30))
-      : (1 + (h % 7));
-    const reposts = Math.max(0, Math.floor(likes * (0.08 + (h % 17) / 100)) + (h % 5));
-    return { likes, reposts };
+  /** 该帖作者对应的粉丝基数（互动数 ≈ 粉/100） */
+  function engagementFansBase(p){
+    ensureProfileStats({ allowDefault: true });
+    if (isCharAuthor(p?.author) || tokenMeansChar(p?.avatar)) {
+      return Math.max(100, Number(state.charFans) || 10000);
+    }
+    if (isUserAuthor(p?.author) || tokenMeansUser(p?.avatar)) {
+      return Math.max(50, Number(state.userFans) || 300);
+    }
+    // 路人/热门博：挂在角色粉量附近，别跳出本卡世界观
+    const base = Math.max(1000, Number(state.charFans) || 20000);
+    const h = hashSeed(String(p?.author || '路人'));
+    return Math.max(300, Math.floor(base * (0.08 + (h % 55) / 100)));
+  }
+  /**
+   * 赞 / 转 / 评（展示虚数）≈ 粉丝数的 1/100，再小幅抖动。
+   * 真实 comments[] 仍只存几条热评，与展示数无关。
+   */
+  function fabricateEngagement(seedText, opts={}){
+    const fans = Math.max(100, Number(opts.fans) || Number(state.charFans) || 10000);
+    const h = hashSeed(String(seedText || '') + '|' + fans);
+    const center = Math.max(1, Math.round(fans / 100));
+    const likeMul = 0.5 + (h % 111) / 100; // 约 0.5x～1.6x · fans/100
+    const likes = Math.max(1, Math.round(center * likeMul));
+    const rpRatio = 0.25 + (h % 50) / 100;
+    const reposts = Math.max(0, Math.round(likes * rpRatio));
+    const cmRatio = 0.35 + (h % 55) / 100;
+    const comments = Math.max(1, Math.round(likes * cmRatio));
+    return { likes, reposts, comments, center };
+  }
+  function ensurePostEngagement(p){
+    if (!p) return p;
+    const fans = engagementFansBase(p);
+    const fab = fabricateEngagement((p.text || '') + '|' + (p.author || ''), { fans });
+    const center = Math.max(1, Math.round(fans / 100));
+    const outOfBand = (n) => {
+      n = Number(n) || 0;
+      return !(n > 0) || n < center / 5 || n > center * 5;
+    };
+    let likes = Number(p.likes) || 0;
+    let reposts = Number(p.reposts) || 0;
+    let cmt = Number(p.commentCount) || 0;
+    const real = (p.comments || []).length;
+    if (outOfBand(likes)) likes = fab.likes;
+    if (outOfBand(reposts) || reposts > likes) reposts = Math.min(fab.reposts, Math.max(0, likes));
+    // 展示评论数：跟赞同量级；实际列表可以只有 5 条
+    if (outOfBand(cmt) || cmt < real || (likes >= 20 && cmt < Math.floor(likes * 0.2))) {
+      cmt = Math.max(fab.comments, real);
+    }
+    p.likes = likes;
+    p.reposts = reposts;
+    p.commentCount = Math.max(cmt, real);
+    return p;
+  }
+  function displayCommentCount(p){
+    ensurePostEngagement(p);
+    return Math.max(Number(p.commentCount) || 0, (p.comments || []).length);
+  }
+  function bumpDisplayComments(p, added){
+    if (!p) return;
+    ensurePostEngagement(p);
+    const real = (p.comments || []).length;
+    let n = Number(p.commentCount) || 0;
+    if (n < real) n = real;
+    const add = Math.max(0, Number(added) || 0);
+    if (add > 0) {
+      const center = Math.max(1, Math.round(engagementFansBase(p) / 100));
+      const jump = Math.max(add, Math.floor(center * (0.01 + (hashSeed(String(p.text || '') + n) % 4) / 100)));
+      n += jump;
+    }
+    p.commentCount = Math.max(n, real);
+  }
+  function formatEngNumber(n){
+    return formatFanNumber(Number(n) || 0);
   }
   function existingCommentAuthors(p){
     return [...new Set((p.comments||[]).map(c=>c.author).filter(Boolean))];
@@ -2876,6 +2939,8 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         const k=c.author+'|'+c.text;
         if(!exist.has(k)){ target.comments.push(c); exist.add(k); added++; }
       });
+      if (added > 0) bumpDisplayComments(target, added);
+      else ensurePostEngagement(target);
       setUnreadOnTarget('comment', opts.postIndex, added);
       console.log('[同层微博] 本帖新增评论', added, '/ 解析到', allComments.length);
       return added;
@@ -2893,25 +2958,20 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       for (let i = list.length - 1; i >= 0; i--) {
         const incoming = list[i];
         const comments = Array.isArray(incoming.comments) ? incoming.comments.slice() : [];
-        let likes = Number(incoming.likes) || 0;
-        let reposts = Number(incoming.reposts) || 0;
-        if (likes <= 0 || reposts < 0) {
-          const fab = fabricateEngagement(incoming.text + '|' + incoming.author);
-          if (likes <= 0) likes = fab.likes;
-          if (reposts <= 0) reposts = fab.reposts;
-        }
         const post = {
           author: incoming.author || '热门博主',
           avatar: incoming.avatar || '',
           text: incoming.text,
           time: incoming.time || today(),
-          likes,
-          reposts,
+          likes: Number(incoming.likes) || 0,
+          reposts: Number(incoming.reposts) || 0,
+          commentCount: Number(incoming.commentCount) || 0,
           fakeImage: incoming.fakeImage || '',
-          comments,
-          unread: comments.length,
+          comments: comments.slice(0, 5), // 实际只留最多 5 条热评
+          unread: Math.min(5, comments.length),
           fromFeed: true,
         };
+        ensurePostEngagement(post);
         state.posts.unshift(post);
         addedPosts++;
       }
@@ -2927,25 +2987,21 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       for (let i = list.length - 1; i >= 0; i--) {
         const incoming = list[i];
         const comments = Array.isArray(incoming.comments) ? incoming.comments.slice() : [];
-        let likes = Number(incoming.likes) || 0;
-        let reposts = Number(incoming.reposts) || 0;
-        if (likes <= 0 || reposts < 0) {
-          const fab = fabricateEngagement(incoming.text + '|' + who);
-          if (likes <= 0) likes = fab.likes;
-          if (reposts <= 0) reposts = fab.reposts;
-        }
-        state.posts.unshift({
+        const post = {
           author: who,
           avatar: defaultCharAvatarToken(),
           text: incoming.text,
           time: incoming.time || today(),
-          likes,
-          reposts,
+          likes: Number(incoming.likes) || 0,
+          reposts: Number(incoming.reposts) || 0,
+          commentCount: Number(incoming.commentCount) || 0,
           fakeImage: incoming.fakeImage || '',
-          comments,
-          unread: comments.length,
+          comments: comments.slice(0, 5),
+          unread: Math.min(5, comments.length),
           fromCharPost: true,
-        });
+        };
+        ensurePostEngagement(post);
+        state.posts.unshift(post);
         added++;
       }
       // 发博后粉丝微增一点，写回楼层更像真账号
@@ -3023,7 +3079,10 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
 
   // ---- render ----
   function postHTML(p,i){
-    const cm=(p.comments||[]).length;
+    ensurePostEngagement(p);
+    const real=(p.comments||[]).length;
+    const show=displayCommentCount(p);
+    const showN = Math.min(5, real);
     return `<div class="post" data-i="${i}">
       <div class="hd">
         <div class="av">${avatarInner(p.author, p.avatar)}</div>
@@ -3039,16 +3098,16 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         <div class="inp" data-reply="${i}">写评论…</div>
       </div>
       <div class="acts">
-        <div data-act="rp">↻ ${p.reposts||0}</div>
-        <div data-act="cm" data-open="${i}">💬 ${cm}</div>
-        <div data-act="lk">♡ ${p.likes||0}</div>
+        <div data-act="rp">↻ ${formatEngNumber(p.reposts||0)}</div>
+        <div data-act="cm" data-open="${i}">💬 ${formatEngNumber(show)}</div>
+        <div data-act="lk">♡ ${formatEngNumber(p.likes||0)}</div>
       </div>
       <div class="acts" style="border-top:0">
         <div class="ai-gen" data-ai-post="${i}">生成路人评</div>
       </div>
-      ${cm ? `<div class="feed-cmts" data-open="${i}">
-        ${(p.comments||[]).slice(0, Math.max(5, Math.min(8, cm))).map(c=>`<div class="fc"><b>${esc(c.author)}</b>：${esc(c.text)}</div>`).join('')}
-        ${cm > 5 ? `<div class="more">共 ${cm} 条评论 · 点进正文查看全部</div>` : ''}
+      ${real ? `<div class="feed-cmts" data-open="${i}">
+        ${(p.comments||[]).slice(0, showN).map(c=>`<div class="fc"><b>${esc(c.author)}</b>：${esc(c.text)}</div>`).join('')}
+        ${show > showN ? `<div class="more">共 ${formatEngNumber(show)} 条评论 · 点进正文看热评</div>` : ''}
       </div>` : ''}
     </div>`;
   }
@@ -3177,10 +3236,12 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
 
   function openPost(i, opts={}){
     const p=state.posts[i]; if(!p) return;
+    ensurePostEngagement(p);
     const fromNotices = !!(opts.fromNotices || state.page?.fromNotices || state.page?.type === 'notices');
     clearPostUnread(i);
     renderBadges();
     persistPhoneState();
+    const showCmt = displayCommentCount(p);
     let cmts=(p.comments||[]).map((c,idx)=>{
       scrubComment(c);
       const replyHtml = (c.replyTo && !looksLikeAvatarToken(c.replyTo))
@@ -3199,9 +3260,14 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
           <div class="nm">${esc(p.author)}</div><div class="sub">${esc(p.time)}</div></div></div>
         <div class="txt">${fmt(p.text)}</div>
         ${p.fakeImage?`<div class="fake-pic"><div><b>[图片]</b>${esc(p.fakeImage)}</div></div>`:''}
+        <div class="acts" style="border-top:1px solid #f2f2f2;margin-top:8px">
+          <div>↻ ${formatEngNumber(p.reposts||0)}</div>
+          <div>💬 ${formatEngNumber(showCmt)}</div>
+          <div>♡ ${formatEngNumber(p.likes||0)}</div>
+        </div>
       </div>
       <div style="padding:10px 14px;font-weight:600;border-top:8px solid var(--bg);background:#fff">
-        评论 <span style="color:#999;font-weight:400;font-size:12px">共 ${(p.comments||[]).length} 条</span>
+        评论 <span style="color:#999;font-weight:400;font-size:12px">共 ${formatEngNumber(showCmt)} 条 · 展示热评 ${(p.comments||[]).length} 条</span>
       </div>${cmts}
       <div class="page-ai-bar" style="display:flex;gap:8px;padding:8px 10px">
         <button type="button" id="userReplyBtn" style="flex:1;background:#fff;color:var(--orange);border:1px solid #ffd4a8">写评论</button>
@@ -3319,15 +3385,16 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         '请结合人物关系与开场已知公开信息，生成与故事相关的推荐流；只输出微博协议，不要写正文剧情旁白。',
         '硬性数量：',
         '1. 恰好新增 5 条微博（post:1 … post:5），发布者多为路人/热门博主/相关路人号，也可偶有 {{char}}；禁止代替 {{user}} 发博。',
-        '2. 每条微博至少 5 条评论（建议 5～8 条），评论者昵称全部不同，禁止固定那几个路人。',
-        '3. 每条微博行必须带真实量级的「赞数」和「转发数」（不要全是 0）：冷门几十、普通几百、偶有热帖上千；转发数通常小于赞数。不需要写转发正文，只要数字。',
-        '4. 微博主题与评论都要能自然呼应前文已知信息（嗑点、称呼、公开关系等），勿剧透未发生情节。',
-        '5. 输出格式仅限：',
+        '2. 每条微博正文下实际评论行最多 5 条（热评）；评论者昵称全部不同。',
+        '3. 赞/转/评展示数都约等于「该发布者粉丝数的 1/100」（可在 0.5～1.6 倍间浮动）；转发 < 赞，评论展示数与赞同量级。不要写 0，也不要写成个位数热帖。',
+        '4. 微博行格式：[微博|发布者|头像|正文|时间|赞数|转发数|评论数]（评论数为展示总量，可远大于下面实际评论行数）。',
+        '5. 微博主题与评论都要能自然呼应前文已知信息（嗑点、称呼、公开关系等），勿剧透未发生情节。',
+        '6. 输出格式仅限：',
         '<weibo>',
         '<post:1>',
-        '[微博|发布者|头像|正文|时间|赞数|转发数]',
+        '[微博|发布者|头像|正文|时间|赞数|转发数|评论数]',
         '[评论|路人|正文|时间]',
-        '…（≥5条评论）',
+        '…（恰好约 5 条评论行）',
         '</post:1>',
         '…共5个 post',
         '</weibo>',
@@ -3339,6 +3406,8 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     }else if(mode==='char-post'){
       const who = displayChar || rawCharName || '角色';
       const hint = String(opts.prompt || '').trim();
+      const fansHint = formatEngNumber(Number(state.charFans) || 0);
+      const engHint = formatEngNumber(Math.max(1, Math.round((Number(state.charFans) || 10000) / 100)));
       context = [
         '【同层微博任务｜关键词 weibo｜角色发博】',
         `请以角色微博账号「${who}」的口吻发微博（作者必须是 ${who}，头像字段写 char）。`,
@@ -3347,8 +3416,8 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
           : '用户未给提示词：请空 roll——结合人设、开场与最近剧情，发一条自然、可公开的角色碎碎念/动态（勿剧透未发生情节，勿替 {{user}} 发博）。',
         '硬性：',
         '1. 恰好输出 1 条微博（一个 <post:1>）。',
-        '2. 微博行格式：[微博|'+who+'|char|正文|时间|赞数|转发数]，赞/转要像真账号量级（可几百～几千）。',
-        '3. 可选附带 0～5 条路人评论；昵称勿固定复用。',
+        `2. 微博行格式：[微博|${who}|char|正文|时间|赞数|转发数|评论数]。当前角色粉丝约 ${fansHint}，赞/转/评展示数大约在 ${engHint} 量级（粉丝的约 1/100）。`,
+        '3. 可选附带最多 5 条路人评论（热评）；昵称勿固定复用。评论展示数可远大于实际评论行。',
         '4. 可附 [伪图|描述]（可选）。',
         '5. 只输出协议，不要剧情旁白。',
         '角色近期已发主题（避免复读）：',
@@ -3364,7 +3433,7 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         '【同层微博任务｜关键词 weibo】',
         '请结合上方角色设定、场景与聊天前文来理解人物关系/语气/剧情，但输出必须仍是微博协议，不要写正文剧情。',
         `目标帖子编号：${n}（只给这一条生成评论）`,
-        '要求：恰好新增 10 条随机路人评论；昵称全部不同；内容贴合该条微博主题，并可自然反映前文已知信息（勿剧透未发生情节）；禁止固定那几个路人。',
+        '要求：恰好新增 5 条随机路人评论（热评）；昵称全部不同；内容贴合该条微博主题，并可自然反映前文已知信息（勿剧透未发生情节）；禁止固定那几个路人。展示评论总数不必等于 5，界面会按粉丝量级显示虚数。',
         '评论格式只能是：[评论|路人名|正文|时间] 或 [评论|路人名|被回复者|正文|时间]。禁止在评论行里写头像字段（不要写 avatar_xxx / xxx.png）。',
         '已有评论者（请避开）：'+(existingCommentAuthors(p).join('、')||'无'),
         '目标帖数据：',
