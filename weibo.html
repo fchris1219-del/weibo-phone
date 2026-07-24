@@ -168,10 +168,15 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
 .me-card{background:var(--card);margin:8px 0 0;padding:14px;border-radius:0}
 .set-row{margin-top:12px}
 .set-row label{display:block;font-size:12px;color:#666;margin-bottom:4px}
-.set-row input[type=text]{
-  width:100%;height:36px;border:1px solid #eee;border-radius:8px;padding:0 10px;
+.set-row input[type=text],.set-row input[type=number],.set-row textarea{
+  width:100%;border:1px solid #eee;border-radius:8px;padding:0 10px;
   font:inherit;font-size:14px;background:#fafafa;outline:none
 }
+.set-row input[type=text],.set-row input[type=number]{height:36px}
+.set-row textarea{padding:8px 10px;min-height:72px;resize:vertical;line-height:1.45}
+.set-row.half{display:flex;gap:8px}
+.set-row.half > div{flex:1;min-width:0}
+.lore-sec-box{margin-top:10px;padding-top:8px;border-top:1px dashed #eee}
 .set-row .chk{display:flex;align-items:flex-start;gap:8px;font-size:13px;color:#444;line-height:1.45}
 .set-row .chk input{margin-top:3px}
 .set-actions{display:flex;gap:8px;margin-top:14px}
@@ -511,15 +516,27 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
           <label for="setUserBio">我的简介</label>
           <input type="text" id="setUserBio" placeholder="账号简介（可选）" />
         </div>
-        <div class="set-row">
-          <label for="setUserFans">我的粉丝数</label>
-          <input type="number" id="setUserFans" min="0" step="1" placeholder="例如：387" />
+        <div class="set-row half">
+          <div>
+            <label for="setUserFans">我的粉丝数</label>
+            <input type="text" id="setUserFans" placeholder="387 / 1.2万" />
+          </div>
+          <div>
+            <label for="setUserFollowing">我的关注数</label>
+            <input type="text" id="setUserFollowing" placeholder="12" />
+          </div>
         </div>
-        <div class="set-row">
-          <label for="setCharFans">角色粉丝数</label>
-          <input type="number" id="setCharFans" min="0" step="1" placeholder="例如：28641" />
+        <div class="set-row half">
+          <div>
+            <label for="setCharFans">角色粉丝数</label>
+            <input type="text" id="setCharFans" placeholder="1087万" />
+          </div>
+          <div>
+            <label for="setCharFollowing">角色关注数</label>
+            <input type="text" id="setCharFollowing" placeholder="86" />
+          </div>
         </div>
-        <div class="set-hint">粉丝/关注/昵称：第一次钉住 wb_lore 时从开场 <code>[账号|…]</code> 初始化（支持 1087万）。之后以楼层 / chatMetadata 为准；点「重新从聊天抓取」会强制按开场覆盖。</div>
+        <div class="set-hint">粉丝/关注/昵称：第一次钉住 wb_lore 时从开场 <code>[账号|…]</code> 初始化（支持 1087万）。也可在下方「wb_lore 编辑」里拉取后改，再写入本楼层。</div>
       </div>
       <div class="me-card" style="margin-top:10px;border-radius:10px">
         <div style="font-size:14px;font-weight:600;margin-bottom:4px">生成上下文</div>
@@ -537,10 +554,27 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
         <div id="lorePickList" class="lore-pick-list"><div class="lore-empty">打开设置时自动加载…</div></div>
       </div>
       <div class="me-card" style="margin-top:10px;border-radius:10px">
-        <div style="font-size:14px;font-weight:600;margin-bottom:4px">开场设定钉住（wb_lore）</div>
-        <div class="set-hint" id="wbLoreHint">主存是本聊天 chatMetadata（跟聊天文件走，不在楼层里）。藏前 200 楼后再 QR 新开微博，仍会灌回。微博楼层只是当前壳的镜像。</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">wb_lore 编辑 / 注入</div>
+        <div class="set-hint" id="wbLoreHint">把开场 <code>&lt;wb_lore&gt;</code> 拆成账号行 +【分节】+ 其它正文。可拉取「上一个出现过 wb_lore 的楼层」，手改后写入<strong>当前钉住 + 本楼层壳</strong>。</div>
         <div class="set-actions" style="margin-top:10px;flex-wrap:wrap">
-          <button type="button" class="save" id="settingsHarvestLore" style="flex:1;min-width:120px">重新从聊天抓取</button>
+          <button type="button" class="save" id="settingsPullPrevLore" style="flex:1;min-width:120px">拉取上一次楼层</button>
+          <button type="button" class="reset" id="settingsFillPinnedLore" style="flex:1;min-width:120px">填入当前钉住</button>
+        </div>
+        <div id="loreSecList" class="lore-sec-box"></div>
+        <div class="set-row">
+          <label for="loreRestText">其它正文（未分节）</label>
+          <textarea id="loreRestText" rows="4" placeholder="账号行与【标题】之外的内容…"></textarea>
+        </div>
+        <div class="set-row">
+          <label for="loreRawText">完整原文（可手改；点「从原文拆分」会刷新上面分栏）</label>
+          <textarea id="loreRawText" rows="6" placeholder="&lt;wb_lore&gt; 内部全文…"></textarea>
+        </div>
+        <div class="set-actions" style="margin-top:10px;flex-wrap:wrap">
+          <button type="button" class="reset" id="settingsParseLoreRaw" style="flex:1;min-width:120px">从原文拆分</button>
+          <button type="button" class="save" id="settingsWriteLoreFloor" style="flex:1;min-width:120px">写入本楼层</button>
+        </div>
+        <div class="set-actions" style="margin-top:8px;flex-wrap:wrap">
+          <button type="button" class="reset" id="settingsHarvestLore" style="flex:1;min-width:120px">重新从聊天抓取并钉住</button>
           <button type="button" class="reset" id="settingsClearLore" style="flex:1;min-width:120px">清除钉住设定</button>
         </div>
       </div>
@@ -1230,6 +1264,157 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
       out.push(t);
     });
     return out.join('\n\n');
+  }
+  const DEFAULT_LORE_SECTION_TITLES = ['微博撰写要求', '其它初始化'];
+  /** 把 wb_lore 拆成：账号字段 +【分节】+ 其它正文 */
+  function parseWbLoreEditorModel(raw){
+    let text = String(raw || '').replace(/\r\n/g, '\n').trim();
+    const account = extractAccountInitFromLore(text) || {
+      userId: '', charId: '', userFans: 0, charFans: 0,
+      userFollowing: -1, charFollowing: -1, hit: false,
+    };
+    text = text.replace(/\[\s*账号\s*\|[^\]]*\]/gi, '').trim();
+    const markers = [];
+    const reM = /【([^】]+)】/g;
+    let m;
+    while ((m = reM.exec(text))) {
+      markers.push({ title: String(m[1] || '').trim(), start: m.index, end: m.index + m[0].length });
+    }
+    const sections = [];
+    let rest = '';
+    if (!markers.length) {
+      rest = text;
+    } else {
+      rest = text.slice(0, markers[0].start).trim();
+      for (let i = 0; i < markers.length; i++) {
+        const bodyStart = markers[i].end;
+        const bodyEnd = i + 1 < markers.length ? markers[i + 1].start : text.length;
+        sections.push({
+          title: markers[i].title || ('分节' + (i + 1)),
+          body: text.slice(bodyStart, bodyEnd).trim(),
+        });
+      }
+    }
+    // 保证常用标题有空壳，方便手填
+    DEFAULT_LORE_SECTION_TITLES.forEach((title) => {
+      if (!sections.some((s) => s.title === title)) sections.push({ title, body: '' });
+    });
+    return { account, sections, rest };
+  }
+  function readLoreAccountFromSettingsForm(){
+    return {
+      userId: (document.getElementById('setUserId')?.value || '').trim(),
+      charId: (document.getElementById('setCharId')?.value || '').trim(),
+      userFans: parseFanNumber(document.getElementById('setUserFans')?.value),
+      charFans: parseFanNumber(document.getElementById('setCharFans')?.value),
+      userFollowing: parseFanNumber(document.getElementById('setUserFollowing')?.value),
+      charFollowing: parseFanNumber(document.getElementById('setCharFollowing')?.value),
+    };
+  }
+  function applyLoreAccountToSettingsForm(account, opts={}){
+    if (!account) return;
+    const force = !!opts.force;
+    const setIf = (id, val, asFan) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (!force && String(el.value || '').trim()) return;
+      if (val == null || val === '' || (typeof val === 'number' && val < 0)) return;
+      el.value = asFan ? formatFanNumber(val) : String(val);
+    };
+    if (account.userId) setIf('setUserId', account.userId, false);
+    if (account.charId) setIf('setCharId', account.charId, false);
+    if (account.userFans > 0) setIf('setUserFans', account.userFans, true);
+    if (account.charFans > 0) setIf('setCharFans', account.charFans, true);
+    if (account.userFollowing >= 0) setIf('setUserFollowing', account.userFollowing, false);
+    if (account.charFollowing >= 0) setIf('setCharFollowing', account.charFollowing, false);
+  }
+  function renderLoreSectionEditors(sections){
+    const box = document.getElementById('loreSecList');
+    if (!box) return;
+    const list = (sections && sections.length) ? sections : DEFAULT_LORE_SECTION_TITLES.map((t) => ({ title: t, body: '' }));
+    box.innerHTML = list.map((s, i) => `
+      <div class="set-row" data-lore-sec="${i}">
+        <label>【${esc(s.title)}】</label>
+        <textarea rows="4" data-lore-sec-title="${esc(s.title)}" placeholder="这一节的设定正文…">${esc(s.body || '')}</textarea>
+      </div>`).join('');
+  }
+  function readLoreSectionsFromDom(){
+    const box = document.getElementById('loreSecList');
+    if (!box) return [];
+    return [...box.querySelectorAll('textarea[data-lore-sec-title]')].map((ta) => ({
+      title: String(ta.getAttribute('data-lore-sec-title') || '').trim(),
+      body: String(ta.value || '').trim(),
+    })).filter((s) => s.title);
+  }
+  function composeWbLoreFromEditor(){
+    const acc = readLoreAccountFromSettingsForm();
+    const sections = readLoreSectionsFromDom();
+    const rest = String(document.getElementById('loreRestText')?.value || '').trim();
+    const lines = [];
+    lines.push(`[账号|user|${acc.userId || ''}|粉丝:${formatFanNumber(acc.userFans || 0)}|关注:${acc.userFollowing || 0}]`);
+    lines.push(`[账号|char|${acc.charId || ''}|粉丝:${formatFanNumber(acc.charFans || 0)}|关注:${acc.charFollowing || 0}]`);
+    if (rest) lines.push(rest);
+    sections.forEach((s) => {
+      if (!s.body) return;
+      lines.push(`【${s.title}】`);
+      lines.push(s.body);
+    });
+    return lines.join('\n').trim();
+  }
+  function fillWbLoreEditor(raw, opts={}){
+    const model = parseWbLoreEditorModel(raw);
+    applyLoreAccountToSettingsForm(model.account, { force: !!opts.forceAccount });
+    renderLoreSectionEditors(model.sections);
+    const restEl = document.getElementById('loreRestText');
+    if (restEl) restEl.value = model.rest || '';
+    const rawEl = document.getElementById('loreRawText');
+    if (rawEl) rawEl.value = String(raw || '').trim();
+    return model;
+  }
+  /** 从上到下扫描聊天，取「最近一次出现 wb_lore 的楼层」；优先跳过当前微博壳 */
+  function findPreviousWbLoreFromChat(){
+    const hits = [];
+    let curMsgId = null;
+    try { curMsgId = ensureWeiboMsgId(); } catch (_) {}
+    const pushEntry = (entry, idxHint) => {
+      const raw = extractRawMessageText(entry);
+      const blocks = extractWbLoreBlocks(raw);
+      if (!blocks.length) return;
+      const text = joinWbLoreChunks(blocks);
+      if (!text) return;
+      let mid = entry?.message_id ?? entry?.mesId ?? entry?.id ?? idxHint;
+      if (typeof mid === 'string' && /^\d+$/.test(mid)) mid = Number(mid);
+      const isCurrent = curMsgId != null && Number(mid) === Number(curMsgId);
+      // 当前微博壳里也可能嵌了旧 lore：标出来，优先用更早楼层
+      hits.push({ text, mid, isCurrent, idx: hits.length });
+    };
+    try {
+      const ctx = getSillyContextSafe();
+      const chat = Array.isArray(ctx?.chat) ? ctx.chat : [];
+      chat.forEach((entry, i) => pushEntry(entry, i));
+    } catch (_) {}
+    try {
+      if (typeof getChatMessages === 'function') {
+        let list = [];
+        try { list = getChatMessages(-99999) || []; } catch (_) {}
+        if (!Array.isArray(list) || !list.length) {
+          try { list = getChatMessages() || []; } catch (_) {}
+        }
+        (list || []).forEach((entry, i) => pushEntry(entry, i));
+      }
+    } catch (_) {}
+    // 去重后按「新→旧」；优先非当前微博壳
+    const seen = new Set();
+    const newestFirst = [];
+    for (let i = hits.length - 1; i >= 0; i--) {
+      const h = hits[i];
+      if (!h?.text || seen.has(h.text)) continue;
+      seen.add(h.text);
+      newestFirst.push(h);
+    }
+    const nonCur = newestFirst.filter((h) => !h.isCurrent);
+    const pick = nonCur[0] || newestFirst[0];
+    return pick ? pick.text : '';
   }
   function readChatMetadataLore(){
     try {
@@ -3518,15 +3703,18 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     document.getElementById('setUserBio').value = phoneSettings.userBio || '';
     document.getElementById('setUserFans').value = formatFanNumber(Number(state.userFans) || Number(phoneSettings.userFans) || 0);
     document.getElementById('setCharFans').value = formatFanNumber(Number(state.charFans) || Number(phoneSettings.charFans) || 0);
+    document.getElementById('setUserFollowing').value = String(Number(state.userFollowing) || Number(phoneSettings.userFollowing) || 0);
+    document.getElementById('setCharFollowing').value = String(Number(state.charFollowing) || Number(phoneSettings.charFollowing) || 0);
     document.getElementById('setIncludeBg').checked = phoneSettings.includeBgLore !== false;
     document.getElementById('setUserId').placeholder = rawUserName || '我的昵称';
     document.getElementById('setCharId').placeholder = rawCharName || '角色昵称';
+    fillWbLoreEditor(state.wbLore || '', { forceAccount: false });
     const hint = document.getElementById('wbLoreHint');
     if (hint) {
       const n = (state.wbLore || '').length;
       hint.textContent = n
-        ? `chatMetadata 已存 ${n} 字 wb_lore（与楼层无关）。藏前几百楼后再开微博壳也会灌回。`
-        : '尚未写入 chatMetadata。请在开场放 <wb_lore>…</wb_lore> 后打开一次微博（或点重新抓取）。之后藏楼也不影响。';
+        ? `当前钉住 ${n} 字。可改分栏后点「写入本楼层」；或「拉取上一次楼层」用更早的 <wb_lore> 填充。`
+        : '尚未钉住。点「拉取上一次楼层」或「重新从聊天抓取」；改完后点「写入本楼层」。';
     }
     document.getElementById('settingsPanel').classList.add('show');
     _lorePickBookKey = null;
@@ -3544,12 +3732,16 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     const picks = collectCheckedLorePicks();
     const userFans = Math.max(0, parseFanNumber(document.getElementById('setUserFans').value));
     const charFans = Math.max(0, parseFanNumber(document.getElementById('setCharFans').value));
+    const userFollowing = Math.max(0, parseFanNumber(document.getElementById('setUserFollowing').value));
+    const charFollowing = Math.max(0, parseFanNumber(document.getElementById('setCharFollowing').value));
     savePhoneSettings({
       userWeiboId: document.getElementById('setUserId').value.trim(),
       charWeiboId: document.getElementById('setCharId').value.trim(),
       userBio: document.getElementById('setUserBio').value.trim(),
       userFans,
       charFans,
+      userFollowing,
+      charFollowing,
       includeBgLore: !!document.getElementById('setIncludeBg').checked,
       selectedLoreIds: picks.ids,
     });
@@ -3557,8 +3749,12 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     else if (!(Number(state.userFans) > 0)) state.userFans = defaultFansFor('user');
     if (charFans > 0) { state.charFans = charFans; state.fansFromStore = true; }
     else if (!(Number(state.charFans) > 0)) state.charFans = defaultFansFor('char');
+    state.userFollowing = userFollowing;
+    state.charFollowing = charFollowing;
     phoneSettings.userFans = Number(state.userFans) || 0;
     phoneSettings.charFans = Number(state.charFans) || 0;
+    phoneSettings.userFollowing = userFollowing;
+    phoneSettings.charFollowing = charFollowing;
     savePhoneSettings(phoneSettings);
     await persistLorePicks(picks.ids, picks.snap);
     const renamedUser = remapIdentityNames('user', prevUser, displayName);
@@ -3609,14 +3805,70 @@ html,body{width:100%;margin:0;padding:0;background:transparent;
     persistPhoneState();
     renderAll();
     openSettingsPanel();
-    if (lore) showBubble(applied ? `已钉住设定 ${lore.length} 字，并强制同步账号行` : `已钉住设定 ${lore.length} 字`);
-    else showBubble('未在当前聊天找到 <wb_lore>');
+    if (lore) {
+      fillWbLoreEditor(lore, { forceAccount: true });
+      showBubble(applied ? `已钉住设定 ${lore.length} 字，并强制同步账号行` : `已钉住设定 ${lore.length} 字`);
+    } else showBubble('未在当前聊天找到 <wb_lore>');
   };
   document.getElementById('settingsClearLore').onclick = async ()=>{
     if (!confirm('清除钉住的 wb_lore？之后生成将不再强制注入这段设定。')) return;
     await persistWbLore('');
+    fillWbLoreEditor('', { forceAccount: false });
     openSettingsPanel();
     showBubble('钉住设定已清除');
+  };
+  document.getElementById('settingsPullPrevLore').onclick = ()=>{
+    const text = findPreviousWbLoreFromChat();
+    if (!text) {
+      showBubble('聊天里没找到更早的 <wb_lore> 楼层');
+      return;
+    }
+    fillWbLoreEditor(text, { forceAccount: true });
+    showBubble(`已填入上一次楼层设定（${text.length} 字），确认后点「写入本楼层」`);
+  };
+  document.getElementById('settingsFillPinnedLore').onclick = ()=>{
+    fillWbLoreEditor(state.wbLore || '', { forceAccount: true });
+    showBubble(state.wbLore ? `已填入当前钉住（${state.wbLore.length} 字）` : '当前还没有钉住内容');
+  };
+  document.getElementById('settingsParseLoreRaw').onclick = ()=>{
+    const raw = String(document.getElementById('loreRawText')?.value || '').trim();
+    fillWbLoreEditor(raw, { forceAccount: true });
+    showBubble(raw ? '已按原文拆分到分栏' : '原文为空');
+  };
+  document.getElementById('settingsWriteLoreFloor').onclick = async ()=>{
+    const raw = String(document.getElementById('loreRawText')?.value || '').trim();
+    const sectionsHaveBody = readLoreSectionsFromDom().some((s) => s.body);
+    const rest = String(document.getElementById('loreRestText')?.value || '').trim();
+    let text = composeWbLoreFromEditor();
+    // 只改了完整原文、分栏还是空：直接按原文写入
+    if (raw && !sectionsHaveBody && !rest && raw.length >= text.length) {
+      text = raw;
+      fillWbLoreEditor(raw, { forceAccount: true });
+      text = composeWbLoreFromEditor() || raw;
+    }
+    const rawEl = document.getElementById('loreRawText');
+    if (rawEl) rawEl.value = text;
+    await persistWbLore(text);
+    applyFansFromWbLore(text, { force: true });
+    const acc = readLoreAccountFromSettingsForm();
+    savePhoneSettings({
+      userWeiboId: acc.userId,
+      charWeiboId: acc.charId,
+      userFans: acc.userFans,
+      charFans: acc.charFans,
+      userFollowing: acc.userFollowing,
+      charFollowing: acc.charFollowing,
+    });
+    if (acc.userFans > 0) state.userFans = acc.userFans;
+    if (acc.charFans > 0) state.charFans = acc.charFans;
+    if (acc.userFollowing >= 0) state.userFollowing = acc.userFollowing;
+    if (acc.charFollowing >= 0) state.charFollowing = acc.charFollowing;
+    state.fansFromStore = true;
+    persistPhoneState();
+    renderAll();
+    const hint = document.getElementById('wbLoreHint');
+    if (hint) hint.textContent = `已写入本楼层并钉住 ${text.length} 字。`;
+    showBubble(text ? `已写入本楼层 wb_lore（${text.length} 字）` : '已清空本楼层 wb_lore');
   };
   document.getElementById('logCopy').onclick = async ()=>{
     const latest = aiRawLogs[0];
